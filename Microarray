@@ -1,0 +1,322 @@
+######CREATED IN R STUDIO#######
+
+# DATA PROCESSING SCRIPT
+#Depending upon the number of genes in the gene_list, the script can take a long time to run
+
+#Generates graphs of lfc and original data source from 'Merged gene lists' data sets and does so for each gene in the gene list. 
+
+##############################MERGE COMPARISON DATAFRAMES############################
+# start up----
+#remove variables from global environment
+rm(list=ls(all=TRUE))
+
+#clear the console
+cat("\014") 
+
+wd = "Working directory"
+Input = paste0("C:/X/Y/Z/",wd,"/Input")
+Output = paste0("C:/X/Y/Z/",wd,"/Output/")
+
+setwd(Input)
+getwd()
+
+#creates output directory
+dir.create(Output, suppressWarnings(FALSE))
+
+#load libraries
+library(ggplot2)
+library(fBasics)
+library(xlsx)
+library(dplyr)
+library(plyr)
+library(compare)
+library(biomartr)
+library(RColorBrewer)
+library(cowplot)
+
+merged=read.csv("../../Blank.csv")
+files = list.files(pattern="unique*") # creates a list of all files with the extenion '0.csv'
+file_names = sapply(strsplit(files, split=".c", fixed=TRUE), function(x) (x[1]))
+
+##MAIN script - processes all datasets in folder seperately
+for (i in 1:length(files)) {
+  
+  # get data----
+  ##want to make this read whichever file is available ending in '.csv'  
+  df = read.csv(files[i])
+  if (nrow(df)>0){
+    sample=sapply(strsplit(file_names, split="_ann"), head, 1)
+    sampleb=sapply(strsplit(sample, split="_vs_"), tail, 1)
+    samplea=sapply(strsplit(sample, split="_vs_"), head, 1)
+    a_b=paste0(samplea[i],"_",sampleb[i])
+    
+    df=cbind(sample_name=a_b,df)
+    df=subset(df,select=-c(X))
+    merged=rbind(df,merged)
+    
+    df=assign(paste0("df", a_b), df)
+  }
+}
+
+write.csv(merged,paste0(Output,"Merged_all_50.csv"))
+#gene_files=as.character(unique(merged$transcriptclusterid))
+
+#######################################################################################
+##############################MAKE GENE TABLES#########################################
+
+Genelist="Gene_list.csv"
+wd="Working Directory"
+Output = paste0("C:/X/Y/Z/")
+All_data_from_results = read.csv("C:/X/Y/Z/Merged_all_50.csv")
+getwd()
+setwd(paste0("C:/X/Y/Z/",wd))
+
+gene_files=read.csv(paste0("Gene_lists/",Genelist), header=T)
+gene_files=as.character(gene_files$transcriptclusterid)
+
+dir.create("Gene_tables")
+
+  for (i in 1:length(gene_files)) {
+  
+  dfsub=subset(All_data_from_results,All_data_from_results$transcriptclusterid==gene_files[i])
+  
+  gene_chr=as.character(dfsub$seqname[1])
+  gene_symbol=as.character(dfsub$SYMBOLCat[1])
+  biotype_copy=as.character(dfsub$biotypeCAT[1])
+  dfsub=subset(dfsub,select=-c(X))
+  gene_merged=dfsub
+  
+  gene_symbol=sapply(strsplit(gene_symbol,split=",",fixed=TRUE),head,1)
+  gene_merged=assign(paste0("gene_table_", gene_files[i],"_",gene_symbol), gene_merged)
+  write.csv(gene_merged,paste0(Output,"genetable_",gene_symbol,"_chr",gene_chr,"_",gene_files[i],".csv"))
+  
+  }
+ 
+##########################################################################################
+######MAKE HEATMAPS FOR EACH GENE###########
+##Remember to turn off the second 'single' plot print if not desired.
+
+library(stringr)
+library(ggplot2)
+library(reshape)
+library(reshape2)
+library(cowplot)
+
+# start up----
+#remove variables from global environment
+rm(list=ls(all=TRUE))
+
+#clear the console
+cat("\014") 
+
+#Read in gene_behaviour_tables
+wd="Working Directory"
+setwd(paste0("C:/X/Y/Z/",wd,"/Gene_tables/"))
+getwd()
+
+dir.create("../Heatmaps",suppressWarnings(FALSE))
+files = list.files(pattern="*.csv") # creates a list of all files with the extenion 'df.csv'
+file_names = sapply(strsplit(files, split=".", fixed=TRUE), function(x) (x[1]))
+file_names = sapply(strsplit(file_names, split="table_", fixed=TRUE), tail,1)
+file_names = sapply(strsplit(file_names, split="_", fixed=TRUE), head,1)
+
+comparison_list=read.csv("../../lists_dataframes.csv",header=F)
+comparison_list=as.data.frame(comparison_list)
+colnames(comparison_list)[1]="sample_name"
+
+##MAIN script - processes all datasets in folder seperately
+for (i in 1:length(files)) {
+  
+  # get data----
+  df = read.csv(files[i])
+  
+  dfsig=df
+  symbolcat=as.character(df$SYMBOLCat[1])
+  biotypecat=as.character(df$biotypeCAT[1])
+  df=df[-c(1)]  
+  
+  df=merge(df,comparison_list,all=TRUE)
+  df$logFC[is.na(df$logFC)] = 0
+  df$adj.P.Val[is.na(df$adj.P.Val)] = 1
+  
+  df$pvalue50=ifelse(df$adj.P.Val <0.05, "*"," ") 
+  gene_symbol=file_names[i]
+  
+  dfWTE=subset(df,grepl("WTE",df$sample_name) & !grepl ("L",df$sample_name) & !grepl ("YQ",df$sample_name))
+  dfWTL=subset(df,grepl("WTL",df$sample_name) & !grepl ("E",df$sample_name) & !grepl ("YQ",df$sample_name)& !grepl ("M",df$sample_name))
+  dfYQE=subset(df,grepl("YQE",df$sample_name) & !grepl ("L",df$sample_name) & !grepl ("WT",df$sample_name))
+  dfYQL=subset(df,grepl("YQL",df$sample_name) & !grepl ("E",df$sample_name) & !grepl ("WT",df$sample_name)& !grepl ("M",df$sample_name))
+  dfCOMPE=subset(df,grepl("WTE",df$sample_name) & grepl ("YQE",df$sample_name))
+  dfCOMPL=subset(df,grepl("WTL",df$sample_name) & grepl ("YQL",df$sample_name))
+  
+  dfWTE$sample_name=as.character(dfWTE$sample_name)
+  dfWTE$logFC=as.numeric(dfWTE$logFC)
+  colax=sapply(strsplit(dfWTE$sample_name, split="_"), head, 1)
+  cola=sapply(strsplit(colax, split="E"), tail, 1)
+  colbx=sapply(strsplit(dfWTE$sample_name, split="_"), tail, 1)
+  colb=sapply(strsplit(colbx, split="E"), tail, 1)
+  dfWTE$samplea=cola
+  dfWTE$sampleb=colb
+  
+  dfWTL$sample_name=as.character(dfWTL$sample_name)
+  dfWTL$logFC=as.numeric(dfWTL$logFC)
+  colax=sapply(strsplit(dfWTL$sample_name, split="_"), head, 1)
+  cola=sapply(strsplit(colax, split="L"), tail, 1)
+  colbx=sapply(strsplit(dfWTL$sample_name, split="_"), tail, 1)
+  colb=sapply(strsplit(colbx, split="L"), tail, 1)
+  dfWTL$samplea=cola
+  dfWTL$sampleb=colb
+  
+  dfYQE$sample_name=as.character(dfYQE$sample_name)
+  dfYQE$logFC=as.numeric(dfYQE$logFC)
+  colax=sapply(strsplit(dfYQE$sample_name, split="_"), head, 1)
+  cola=sapply(strsplit(colax, split="E"), tail, 1)
+  colbx=sapply(strsplit(dfYQE$sample_name, split="_"), tail, 1)
+  colb=sapply(strsplit(colbx, split="E"), tail, 1)
+  dfYQE$samplea=cola
+  dfYQE$sampleb=colb
+  
+  dfYQL$sample_name=as.character(dfYQL$sample_name)
+  dfYQL$logFC=as.numeric(dfYQL$logFC)
+  colax=sapply(strsplit(dfYQL$sample_name, split="_"), head, 1)
+  cola=sapply(strsplit(colax, split="L"), tail, 1)
+  colbx=sapply(strsplit(dfYQL$sample_name, split="_"), tail, 1)
+  colb=sapply(strsplit(colbx, split="L"), tail, 1)
+  dfYQL$samplea=cola
+  dfYQL$sampleb=colb
+  
+  dfCOMPE$sample_name=as.character(dfCOMPE$sample_name)
+  dfCOMPE$logFC=as.numeric(dfCOMPE$logFC)
+  colax=sapply(strsplit(dfCOMPE$sample_name, split="_"), head, 1)
+  cola=sapply(strsplit(colax, split="E"), tail, 1)
+  colbx=sapply(strsplit(dfCOMPE$sample_name, split="_"), tail, 1)
+  colb=sapply(strsplit(colbx, split="E"), tail, 1)
+  dfCOMPE$samplea=cola
+  dfCOMPE$sampleb=colb
+  
+  dfCOMPL$sample_name=as.character(dfCOMPL$sample_name)
+  dfCOMPL$logFC=as.numeric(dfCOMPL$logFC)
+  colax=sapply(strsplit(dfCOMPL$sample_name, split="_"), head, 1)
+  cola=sapply(strsplit(colax, split="L"), tail, 1)
+  colbx=sapply(strsplit(dfCOMPL$sample_name, split="_"), tail, 1)
+  colb=sapply(strsplit(colbx, split="L"), tail, 1)
+  dfCOMPL$samplea=cola
+  dfCOMPL$sampleb=colb
+  
+  pWTE = ggplot(data = dfWTE,
+                aes(x = sampleb, y = samplea, fill = logFC)) + 
+    geom_raster() +
+    xlab("Sample B") + 
+    ylab("Sample A") +
+    scale_fill_distiller(palette = "RdYlBu", limits=c(-5,5)) +
+    geom_text(aes(label = round(logFC, 2))) +
+    geom_text(aes(label = pvalue50), vjust = 2) +
+    theme(plot.title = element_text(hjust=0.5, size = 14), axis.text.x = element_text(angle = 90, vjust=0.5, size = 12),
+          axis.text.y = element_text(size = 12), axis.title=element_text(size=12), panel.background = element_rect(fill="white"),
+          panel.border = element_rect(fill=NA, colour = "grey"))+
+    ggtitle("WT Early spermatids")
+  
+  pWTL = ggplot(data = dfWTL,
+                aes(x = sampleb, y = samplea, fill = logFC)) + 
+    geom_raster() +
+    xlab("Sample B") + 
+    ylab("Sample A") +
+    scale_fill_distiller(palette = "RdYlBu", limits=c(-5,5)) +
+    geom_text(aes(label = round(logFC, 2))) +
+    geom_text(aes(label = pvalue50), vjust = 2) +
+    theme(plot.title = element_text(hjust=0.5, size = 14), axis.text.x = element_text(angle = 90, vjust=0.5, size = 12),
+          axis.text.y = element_text(size = 12),axis.title=element_text(size=12), panel.background = element_rect(fill="white"),
+          panel.border = element_rect(fill=NA, colour = "grey")) +
+    ggtitle("WT Late spermatids")
+  
+  pYQE = ggplot(data = dfYQE,
+                aes(x = sampleb, y = samplea, fill = logFC)) + 
+    geom_raster() +
+    xlab("Sample B") + 
+    ylab("Sample A") +
+    scale_fill_distiller(palette = "RdYlBu", limits=c(-5,5)) +
+    geom_text(aes(label = round(logFC, 2))) +
+    geom_text(aes(label = pvalue50), vjust = 2) +
+    theme(plot.title = element_text(hjust=0.5, size = 14), axis.text.x = element_text(angle = 90, vjust=0.5, size = 12),
+          axis.text.y = element_text(size = 12),axis.title=element_text(size=12), panel.background = element_rect(fill="white"),
+          panel.border = element_rect(fill=NA, colour = "grey")) +
+    ggtitle("YQ Early spermatids")
+  
+  pYQL = ggplot(data = dfYQL,
+                aes(x = sampleb, y = samplea, fill = logFC)) + 
+    geom_raster() +
+    xlab("Sample B") + 
+    ylab("Sample A") +
+    scale_fill_distiller(palette = "RdYlBu", limits=c(-5,5)) +
+    geom_text(aes(label = round(logFC, 2))) +
+    geom_text(aes(label = pvalue50), vjust = 2) +
+    theme(plot.title = element_text(hjust=0.5, size = 14), axis.text.x = element_text(angle = 90, vjust=0.5, size = 12),
+          axis.text.y = element_text(size = 12),axis.title=element_text(size=12), panel.background = element_rect(fill="white"),
+          panel.border = element_rect(fill=NA, colour = "grey")) +
+    ggtitle("YQ Late spermatids")
+  
+  pCOMPE = ggplot(data = dfCOMPE,
+                  aes(x = sampleb, y = samplea, fill = logFC)) + 
+    geom_raster() +
+    xlab("YQ sample") + 
+    ylab("WT sample") +
+    scale_fill_distiller(palette = "RdYlBu", limits=c(-5,5)) +
+    geom_text(aes(label = round(logFC, 2))) +
+    geom_text(aes(label = pvalue50), vjust = 2) +
+    theme(plot.title = element_text(hjust=0.5, size = 14), axis.text.x = element_text(angle = 90, vjust=0.5, size = 12),
+          axis.text.y = element_text(size = 12),axis.title=element_text(size=12), panel.background = element_rect(fill="white"),
+          panel.border = element_rect(fill=NA, colour = "grey")) +
+    ggtitle("WT vs YQ Early spermatids")
+  
+  pCOMPL = ggplot(data = dfCOMPL,
+                  aes(x = sampleb, y = samplea, fill = logFC)) + 
+    geom_raster() +
+    xlab("YQ sample") + 
+    ylab("WT sample") +
+    scale_fill_distiller(palette = "RdYlBu", limits=c(-5,5)) +
+    geom_text(aes(label = round(logFC, 2))) +
+    geom_text(aes(label = pvalue50), vjust = 2) +
+    theme(plot.title = element_text(hjust=0.5, size=14), axis.text.x = element_text(angle = 90, vjust=0.5, size = 12),
+          axis.text.y = element_text(size = 12),axis.title=element_text(size=12), panel.background = element_rect(fill="white"),
+          panel.border = element_rect(fill=NA, colour = "grey")) +
+    ggtitle("WT vs YQ Late spermatids")
+  
+  pWTE_single = ggplot(data = dfWTE,
+                       aes(x = sampleb, y = samplea, fill = logFC)) + 
+    geom_raster() +
+    xlab("Sample B") + 
+    ylab("Sample A") +
+    scale_fill_distiller(palette = "RdYlBu", limits=c(-5,5)) +
+    geom_text(aes(label = round(logFC, 2))) +
+    geom_text(aes(label = pvalue50), vjust = 2) +
+    theme(axis.text.x = element_text(angle = 90, vjust=0.5, size = 12),
+          axis.text.y = element_text(size = 12), axis.title=element_text(size=12), panel.background = element_rect(fill="white"),
+          panel.border = element_rect(fill=NA, colour = "grey"),legend.position = 'none')
+  
+  multi=plot_grid(pWTE + theme(legend.position = 'none'),
+                  pWTL + theme(legend.position = 'none'), 
+                  pYQE + theme(legend.position = 'none'), 
+                  pYQL + theme(legend.position = 'none'),
+                  pCOMPE + theme(legend.position = 'none'), 
+                  pCOMPL + theme(legend.position = 'none'),
+                  scale=1, ncol = 2, nrow = 3)
+  title <- ggdraw() + draw_label(gene_symbol, fontface='bold',size=18)
+  biotype = ggdraw() + draw_label(biotypecat, fontface='bold',size=14)
+  biotypesmall = ggdraw() + draw_label(biotypecat, fontface='bold',size=10)
+  symbols = ggdraw() + draw_label(symbolcat, fontface='bold',size=12)
+  symbolssmall = ggdraw() + draw_label(symbolcat, fontface='bold',size=8)
+  legend=get_legend(pWTE)
+  WTvsYQ = plot_grid(pCOMPE + theme(legend.position = 'none'), 
+                     pCOMPL + theme(legend.position = 'none'),
+                     scale=1, ncol = 2, nrow = 1)
+  
+  multi=plot_grid(title, multi, biotype, symbols, ncol=1, rel_heights=c(0.1, 2,0.05,0.05)) 
+  pWTE_single = plot_grid(title, pWTE_single, biotypesmall, symbolssmall, ncol=1, rel_heights=c(0.25, 2,0.15,0.15))
+  WTvsYQ = plot_grid(title, WTvsYQ, biotypesmall, symbolssmall, ncol=1, rel_heights=c(0.25, 2,0.15,0.15))
+  ggsave(filename=paste0("../Heatmaps/",gene_symbol,"_multi_heatmap.png"),plot=multi, width=8, height=13, scale=1)  
+  ggsave(filename=paste0("../Heatmaps/",gene_symbol,"_WTE_heatmap.png"),plot=pWTE_single, width=4, height=5, scale=1) 
+  ggsave(filename=paste0("../Heatmaps/",gene_symbol,"_WTvsYQ_heatmap.png"),plot=WTvsYQ, width=8, height=5, scale=1) 
+  ggsave(filename="../Heatmaps/legend.png",plot=legend, width=4, height=6, scale=1)
+
+  
+}
