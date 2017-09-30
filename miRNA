@@ -1,0 +1,63 @@
+#######CREATED IN R STUDIO#######
+
+############ miRNA-target investigation of differentially expressed miRNAs #############
+
+# start up----
+#remove variables from global environment
+rm(list=ls(all=TRUE))
+
+#clear the console
+cat("\014") 
+
+library(data.table)
+library(stringr)
+library(tidyr)
+
+#Read in miRNA list
+wd="RUN1"
+dir.create(wd, suppressWarnings(FALSE))
+setwd(paste0("C:/X/Y/Z/",wd))
+getwd()
+output="Output"
+dir.create(output, suppressWarnings(FALSE))
+
+df=read.csv("../mmu_MTI_mirTardownload.csv")
+seqlist=read.csv("../RNAseq_miRNA_list.csv")
+arraylist=read.csv("../microarray_miRNA_list.csv")
+
+seqgenes=data.table(seqlist$miRNA)
+seqgenes=unique(seqgenes)
+arraygenes=data.table(arraylist$miRNA)
+arraygenes=unique(arraygenes)
+
+setkey(setDT(df),miRNA)
+seqMITs=df[seqgenes]
+arrayMITs=df[arraygenes]
+
+write.csv(arrayMITs,paste0(output,"/arrayMITs.csv"))
+write.csv(seqMITs,paste0(output,"/seqMITs.csv"))
+
+############## cross-reference with DE mRNAs from RNA-seq and microarray ############
+
+seqmRNA=read.csv("../RNAseq_mRNA_DE.csv")
+arraymRNA=read.csv("../microarray_mRNA_DE.csv")
+
+seqmRNAlist=data.table(seqmRNA$gene_name)
+seqmRNAlist=unique(seqmRNAlist)
+arraymRNAlist=data.table(arraymRNA$SYMBOLCat)
+arraymRNAlist=separate_rows(arraymRNAlist, V1, sep = ",")
+arraymRNAlist=unique(arraymRNAlist)
+arraymRNAlist=data.table(arraymRNAlist)
+
+seqMITs$source="Smallseq"
+arrayMITs$source="miRNA array"
+MITs=merge(seqMITs,arrayMITs,all=TRUE)
+
+setkey(setDT(MITs),Target.Gene)
+matchSEQ=MITs[seqmRNAlist]
+matchARRAY=MITs[arraymRNAlist]
+
+write.csv(matchARRAY,paste0(output,"/array_matches.csv"))
+write.csv(matchSEQ,paste0(output,"/seq_matches.csv"))
+
+######################################################################################
