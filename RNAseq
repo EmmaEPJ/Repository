@@ -1,0 +1,551 @@
+#######CREATED IN R STUDIO#######
+##Emma EPJ##
+
+#####RNA-seq GENE SHORT-LIST########
+
+# start up----
+#remove variables from global environment
+rm(list=ls(all=TRUE))
+
+#clear the console
+cat("\014") 
+
+#load libraries
+library(ggplot2)
+library(fBasics)
+library(xlsx)
+library(dplyr)
+library(plyr)
+library(compare)
+library(biomartr)
+
+###DEFINE VARIABLES###
+
+setwd("C:/X/Y/Z")
+getwd()
+
+files = list.files(pattern="*.csv") # creates a list of all files with the extenion '.csv'
+file_names = sapply(strsplit(files, split=".", fixed=TRUE), function(x) (x[1]))
+
+##Defines output folder
+Output="../Output/"
+
+dir.create(Output,suppressWarnings(FALSE))
+
+###################################################
+
+##MAIN script - processes all datasets in folder seperately
+for (i in 1:length(files)) {
+  # get data----
+  ##want to make this read whichever file is available ending in '.csv'  
+  df = read.csv(files[i])
+  samplea=sapply(strsplit(files, split="_"), function(x) (x[1]))
+  sampleb=sapply(strsplit(files, split="_"), tail, 1)
+  sampleb=sapply(strsplit(sampleb, split=".", fixed=TRUE),function(x) (x[1]))
+  a_b=sapply(strsplit(files[i],split=".",fixed=TRUE),function(x) (x[1]))
+  
+  #rename values columns
+  colnames(df)[6]=paste0("lg2",samplea[i])
+  colnames(df)[7]=paste0("lg2",sampleb[i])
+  colnames(df)[8]=paste0("cpm",samplea[i])
+  colnames(df)[9]=paste0("cpm",sampleb[i])
+  
+  #make summary
+  sdf=df
+  sdf[sdf == 0]=NA
+  sdf=summary(sdf)
+  sumdf=gsub(pattern = ":", replacement = ",", sdf)
+  sumdf=as.table(sumdf)
+  
+  write.table(sumdf, paste0(Output,a_b,"Data_summary.csv"),sep=",",quote = FALSE, row.names=F)
+  
+  summary=read.csv(paste0(Output,a_b,"Data_summary.csv"), header=FALSE)
+  summary=summary[,c(9,10,12,14,16,18)]
+  summary=summary[c(-1,-8),]
+  colnames(summary)[1]="Info"
+  colnames(summary)[2]="logfc"
+  colnames(summary)[3]=paste0("lg2",samplea[i])
+  colnames(summary)[4]=paste0("lg2",sampleb[i])
+  colnames(summary)[5]=paste0("cpm",samplea[i])
+  colnames(summary)[6]=paste0("cpm",sampleb[i])
+  
+  write.csv(summary,paste0(Output,a_b,"Data_summary.csv"))
+  
+  #define value for filtering genes - either above the median or 3rd Quartile values
+  #add '3' for the median, '5' for the 3rd quartile
+  valuea=summary[5,paste0("cpm",samplea[i])]
+  valueb=summary[5,paste0("cpm",sampleb[i])]
+  values=c(valuea,valueb)
+  allcpmvalthresh=max(values)
+  
+  #filter on the value defined above
+  alldf=df
+  alldf$Select= ifelse((alldf[[8]] >=allcpmvalthresh|alldf[[9]] >=allcpmvalthresh), alldf$logfc, "0")
+  alldf = transform(alldf, Select = as.numeric(Select),
+                    X = as.character(X), 
+                    gene_name = as.character(gene_name),
+                    gene_biotype = as.character(gene_biotype))
+  
+  #creates a new data frame ('dfsort') that lists the observations where Select is not equal to zero'
+  dfsort=subset(alldf, alldf$Select!=0)
+  #reads top 25 values as sorted by 'Select' above from 'dfsortselect'
+  t25=head((dfsort), n = 25)
+  
+  write.csv(t25, paste0(Output,a_b,"t25_median.csv"), row.names=F)
+  #write.csv(b25, paste0(Output,a_b,"b25_3rdquart.csv"), row.names=F)
+  
+  ################################# WRITE OUTPUTS ##############################
+  
+  #collect selection values for all comparisons
+  allcpmvalthresh=as.data.frame(allcpmvalthresh)
+  colnames(allcpmvalthresh)[1]=file_names[i]
+  allcpmvalthresh=assign(paste0("allcpmvalthresh_", file_names[i]), allcpmvalthresh)
+  allcpmvalthresh=NULL
+  
+  # rename the data frame
+  df=assign(paste0("df", file_names[i]), df) 
+  
+  #Select top 20 or 10 of each comparison
+  allt20=head(t25,n=20)
+  allt10=head(t25,n=10)
+  
+ #Write results
+  write.csv(allt10, paste0(Output,a_b,"all10.csv"), row.names = F)
+  write.csv(allt20, paste0(Output,a_b,"all20.csv"), row.names = F)
+  
+}
+
+#List all cpmvalthresh and output
+vlist=ls(pattern="allcpmvalthresh_*")
+valthresh=ldply(vlist,get)
+valthresh=cbind(value=1,valthresh)
+valthresh=aggregate(x=valthresh[1:ncol(valthresh)], by=list(valthresh$value), min, na.rm = TRUE)
+valthresh=valthresh[,c(-1,-2)]
+write.csv(valthresh, paste0(Output,"All_threshold_values_3rdquart.csv"), row.names=F)
+
+
+################################################################################
+
+##MERGE ALL DIFFERENTIAL EXPRESSION COMPARISON DOCS##
+
+##Merge RNA seq differencial expression docs
+#Takes approx. 90 seconds to run
+
+##USES
+#Generates a merged database of all genes from all comparisons.
+
+##REQUIREMENTS
+#Place all data to be merged in the working directory 
+#Make sure 'Blank' file is present. This should contain only column headings, 
+#these should match the format of the data to be examined
+
+# start up----
+#remove variables from global environment
+rm(list=ls(all=TRUE))
+
+#clear the console
+cat("\014") 
+
+setwd("C:/X/Y/Z/Input")
+getwd()
+
+#creates output directory
+dir.create("Merged")
+
+merged=read.csv("../../Blank.csv")
+files = list.files(pattern="*.csv") # creates a list of all files with the extenion '.csv'
+file_names = sapply(strsplit(files, split=".", fixed=TRUE), function(x) (x[1]))
+
+##MAIN script - processes all datasets in folder seperately
+for (i in 1:length(files)) {
+  # get data----
+  ##want to make this read whichever file is available ending in '.csv'  
+  df = read.csv(files[i])
+  samplea=sapply(strsplit(files, split="_"), function(x) (x[1]))
+  sampleb=sapply(strsplit(files, split="_"), tail, 1)
+  sampleb=sapply(strsplit(sampleb, split=".", fixed=TRUE),function(x) (x[1]))
+  a_b=sapply(strsplit(files[i],split=".",fixed=TRUE),function(x) (x[1]))
+  
+  df=cbind(sample_name=a_b,df)
+  colnames(df)[7]="log2_a"
+  colnames(df)[8]="log2_b"
+  colnames(df)[9]="cpm_a"
+  colnames(df)[10]="cpm_b"
+  merged=rbind(df,merged)
+  
+  df=assign(paste0("df", file_names[i]), df)
+}
+
+write.csv(merged,"../Merged_All.csv")
+
+########################################################
+##Make gene list##
+
+##Merge lists of top 10 or 20 genes
+
+##USES
+#Generates a merged database of all genes from all comparisons.
+
+##REQUIREMENTS
+#Place all data to be merged in the working directory 
+
+# start up----
+#remove variables from global environment
+rm(list=ls(all=TRUE))
+
+#clear the console
+cat("\014") 
+
+setwd("C:/X/Y/Z")
+getwd()
+
+#creates output directory
+dir.create("Merged")
+
+merged=read.csv("../Blank.csv")
+subsetde="all"
+files = list.files(pattern="*20.csv") # creates a list of all files with the extenion '.csv'
+file_names = sapply(strsplit(files, split=".", fixed=TRUE), function(x) (x[1]))
+
+##MAIN script - processes all datasets in folder seperately
+for (i in 1:length(files)) {
+  # get data----
+  df = read.csv(files[i])
+  samplea=sapply(strsplit(files, split="_"), function(x) (x[1]))
+  sampleb=sapply(strsplit(files, split="_"), tail, 1)
+  sampleb=sapply(strsplit(sampleb, split=".", fixed=TRUE),function(x) (x[1]))
+  sampleb=sapply(strsplit(sampleb, split=subsetde, fixed=TRUE), head, 1)
+  a_b=paste0(samplea[i],"_",sampleb[i])
+  
+  df=cbind(sample_name=a_b,df)
+  colnames(df)[7]="log2_a"
+  colnames(df)[8]="log2_b"
+  colnames(df)[9]="cpm_a"
+  colnames(df)[10]="cpm_b"
+  merged=rbind(df,merged)
+  
+  df=assign(paste0("df", file_names[i]), df)
+}
+
+write.csv(merged,"../DEgenes.csv")
+
+##################################################
+
+genelist=read.csv("../DEgenes.csv")
+
+genelist=as.data.frame(genelist[,4])
+colnames(genelist)[1]="Genes"
+
+genelist=as.data.frame(unique(genelist$Genes))
+write.csv(genelist,"Merged/genelist.csv")
+
+#########THIS SCRIPT FINDS ALL GENES FROM A DEFINED GENE LIST (SPECIFIED IN THE FOLDER) AND SEARCHES FOR THEM IN THE DATASETS, THEN PRODUCES PLOTS OF LOGFC VALUE#############
+
+#Place the script 1 level above the Input folder
+#Set working directory below
+
+##REQUIREMENTS
+#Define a "gene_list.csv" using the output above.
+#OR Simply copy the actual gene names (not the header) in one column, into the spreadsheet
+# 'gene_list.csv' and save as a .csv; OR define below under 'Optional gene symbol list'
+
+# start up----
+#remove variables from global environment
+rm(list=ls(all=TRUE))
+
+#clear the console
+cat("\014")
+
+##All files to be examined must be placed in the 'Input' folder
+wd="DEGenes"
+setwd(paste0("C:/X/Y/Z"))
+getwd()
+
+#Specify genelist to be used here:
+genes=read.csv("genelist.csv",header=T)
+genes=genes[,2]
+genes=as.character(genes)
+
+##Optional gene symbol list
+#genes=c("GeneA", "GeneB", "GeneC")
+
+#load libraries
+require(ggplot2)
+require(fBasics)
+require(xlsx)
+require(dplyr)
+require(compare)
+require(biomartr)
+
+dir.create("Gene_dataframes")
+
+genes=genes[order(genes,decreasing = FALSE)]
+df = read.csv("../../HEATMAPS/Merged_All.csv")
+df=df[,-1]
+df = transform(df,X = as.character(X),
+               gene_name = as.character(gene_name),
+               gene_biotype = as.character(gene_biotype))
+
+for (i in 1:length(genes)) {
+  # get data----
+  ##want to make this read whichever file is available ending in '.csv'
+  gene=genes[i]
+  
+  genelist=df %>%
+    filter(gene_name %in% gene)
+  genelist=genelist[order(genelist$gene_name, decreasing=FALSE),]
+
+  #'genelist' takes all listed genes in 'genes' and searches for them in df, writes as csv.
+  write.csv(genelist, paste0("Gene_dataframes/Merged_all",gene,"_df.csv"))
+
+}
+
+###################################################################
+
+##Make heatmaps for short-listed genes##
+##Uses genes specific data tables created above
+##Remember to turn off the second 'single' plot print if not desired.
+
+library(stringr)
+library(ggplot2)
+library(reshape)
+library(reshape2)
+library(cowplot)
+
+# start up----
+#remove variables from global environment
+rm(list=ls(all=TRUE))
+
+#clear the console
+cat("\014") 
+
+#Read in gene_behaviour_tables
+wd="DEGenes3"
+setwd(paste0("C:/X/Y/Z"))
+getwd()
+dir.create("../../HEATMAPS/Output", suppressWarnings(FALSE))
+sample_order=read.csv("../../../lists_dataframes.csv", header=F)$V
+sample_order=as.character(sample_order)
+
+files = list.files(pattern="*df.csv") # creates a list of all files with the extenion 'df.csv'
+file_names = sapply(strsplit(files, split=".", fixed=TRUE), function(x) (x[1]))
+gene_names = sapply(strsplit(file_names, split="_all", fixed=TRUE), tail, 1)
+gene_names = sapply(strsplit(gene_names, split="_df", fixed=TRUE), head, 1)
+
+##MAIN script - processes all datasets in folder seperately
+for (i in 1:length(files)) {
+  
+  # get data----
+  ##want to make this read whichever file is available ending in '.csv'  
+  dforiginal = read.csv(files[i])
+  gene_id=gene_names[i]
+  
+  #Keep only sample names and LogFC value    
+  df=dforiginal
+  chr=as.character(dforiginal$chr[1])
+  chr=ifelse(chr=="20","X",ifelse(chr=="21","Y",chr))
+  biotype=as.character(dforiginal$gene_biotype[1])
+  
+  df= subset(df, select=-c(X.1,X,gene_name,gene_biotype,chr,log2_a,log2_b,cpm_a,cpm_b))
+  df$sample_name <- sapply(df$sample_name,gsub,pattern="EC",replacement="L")
+  df$sample_name <- sapply(df$sample_name,gsub,pattern="R",replacement="E")
+  
+  #specify sample order
+  df$sample_name=factor(df$sample_name,levels=sample_order)
+  
+  #order
+  df <- df[order(df$sample_name),]
+  sample_name=as.data.frame(sample_order)
+  colnames(sample_name)[1]="sample_name"
+  sample_name$gene_name=gene_id
+  df=merge(sample_name,df,all=TRUE)
+  df[is.na(df)] = 0
+  df= subset(df, select=-c(gene_name))
+  colnames(df)[2]="logFC"
+  
+  #subset data frame
+  dfWTE=subset(df,grepl("WTE",df$sample_name) & !grepl ("L",df$sample_name) & !grepl ("YQ",df$sample_name))
+  dfWTL=subset(df,grepl("WTL",df$sample_name) & !grepl ("E",df$sample_name) & !grepl ("YQ",df$sample_name)& !grepl ("M",df$sample_name))
+  dfYQE=subset(df,grepl("YQE",df$sample_name) & !grepl ("L",df$sample_name) & !grepl ("WT",df$sample_name))
+  dfYQL=subset(df,grepl("YQL",df$sample_name) & !grepl ("E",df$sample_name) & !grepl ("WT",df$sample_name)& !grepl ("M",df$sample_name))
+  dfCOMPE=subset(df,grepl("WTE",df$sample_name) & grepl ("YQE",df$sample_name))
+  dfCOMPL=subset(df,grepl("WT",df$sample_name) & grepl ("YQ",df$sample_name) & !grepl("E",df$sample_name) & !grepl("M",df$sample_name))
+  
+  #reorganise and label subset dataframes
+  dfWTE$sample_name=as.character(dfWTE$sample_name)
+  dfWTE$logFC=as.numeric(dfWTE$logFC)
+  colax=sapply(strsplit(dfWTE$sample_name, split="_"), head, 1)
+  cola=sapply(strsplit(colax, split="E"), tail, 1)
+  colbx=sapply(strsplit(dfWTE$sample_name, split="_"), tail, 1)
+  colb=sapply(strsplit(colbx, split="E"), tail, 1)
+  dfWTE$samplea=cola
+  dfWTE$sampleb=colb
+  dfWTE=dfWTE[,c("samplea","sampleb","logFC")]
+  
+  dfWTL$sample_name=as.character(dfWTL$sample_name)
+  dfWTL$logFC=as.numeric(dfWTL$logFC)
+  colax=sapply(strsplit(dfWTL$sample_name, split="_"), head, 1)
+  cola=sapply(strsplit(colax, split="L"), tail, 1)
+  colbx=sapply(strsplit(dfWTL$sample_name, split="_"), tail, 1)
+  colb=sapply(strsplit(colbx, split="L"), tail, 1)
+  dfWTL$samplea=cola
+  dfWTL$sampleb=colb
+  dfWTL=dfWTL[,c("samplea","sampleb","logFC")]
+  
+  dfYQE$sample_name=as.character(dfYQE$sample_name)
+  dfYQE$logFC=as.numeric(dfYQE$logFC)
+  colax=sapply(strsplit(dfYQE$sample_name, split="_"), head, 1)
+  cola=sapply(strsplit(colax, split="E"), tail, 1)
+  colbx=sapply(strsplit(dfYQE$sample_name, split="_"), tail, 1)
+  colb=sapply(strsplit(colbx, split="E"), tail, 1)
+  dfYQE$samplea=cola
+  dfYQE$sampleb=colb
+  dfYQE=dfYQE[,c("samplea","sampleb","logFC")]
+  
+  dfYQL$sample_name=as.character(dfYQL$sample_name)
+  dfYQL$logFC=as.numeric(dfYQL$logFC)
+  colax=sapply(strsplit(dfYQL$sample_name, split="_"), head, 1)
+  cola=sapply(strsplit(colax, split="L"), tail, 1)
+  colbx=sapply(strsplit(dfYQL$sample_name, split="_"), tail, 1)
+  colb=sapply(strsplit(colbx, split="L"), tail, 1)
+  dfYQL$samplea=cola
+  dfYQL$sampleb=colb
+  dfYQL=dfYQL[,c("samplea","sampleb","logFC")]
+  
+  dfCOMPE$sample_name=as.character(dfCOMPE$sample_name)
+  dfCOMPE$logFC=as.numeric(dfCOMPE$logFC)
+  colax=sapply(strsplit(dfCOMPE$sample_name, split="_"), head, 1)
+  cola=sapply(strsplit(colax, split="E"), tail, 1)
+  colbx=sapply(strsplit(dfCOMPE$sample_name, split="_"), tail, 1)
+  colb=sapply(strsplit(colbx, split="E"), tail, 1)
+  dfCOMPE$samplea=cola
+  dfCOMPE$sampleb=colb
+  dfCOMPE=dfCOMPE[,c("samplea","sampleb","logFC")]
+  
+  dfCOMPL$sample_name=as.character(dfCOMPL$sample_name)
+  dfCOMPL$logFC=as.numeric(dfCOMPL$logFC)
+  colax=sapply(strsplit(dfCOMPL$sample_name, split="_"), head, 1)
+  cola=sapply(strsplit(colax, split="L"), tail, 1)
+  colbx=sapply(strsplit(dfCOMPL$sample_name, split="_"), tail, 1)
+  colb=sapply(strsplit(colbx, split="L"), tail, 1)
+  dfCOMPL$samplea=cola
+  dfCOMPL$sampleb=colb
+  dfCOMPL=dfCOMPL[,c("samplea","sampleb","logFC")]
+  
+  #generate plots
+  pWTE = ggplot(data = dfWTE,
+                aes(x = sampleb, y = samplea, fill = logFC)) + 
+    geom_raster() +
+    xlab("Sample B") + 
+    ylab("Sample A") +
+    scale_fill_distiller(palette = "RdYlBu", limits=c(-9,9)) +
+    geom_text(aes(label = round(logFC, 2))) +
+    theme(plot.title = element_text(hjust=0.5, size = 14), axis.text.x = element_text(angle = 90, vjust=0.5, size = 12),
+          axis.text.y = element_text(size = 12), axis.title=element_text(size=12), panel.background = element_rect(fill="white"),
+          panel.border = element_rect(fill=NA, colour = "grey"))+
+    ggtitle("WT Early spermatids")
+  
+  pWTL = ggplot(data = dfWTL,
+                aes(x = sampleb, y = samplea, fill = logFC)) + 
+    geom_raster() +
+    xlab("Sample B") + 
+    ylab("Sample A") +
+    scale_fill_distiller(palette = "RdYlBu", limits=c(-9,9)) +
+    geom_text(aes(label = round(logFC, 2))) +
+    theme(plot.title = element_text(hjust=0.5, size = 14), axis.text.x = element_text(angle = 90, vjust=0.5, size = 12),
+          axis.text.y = element_text(size = 12),axis.title=element_text(size=12), panel.background = element_rect(fill="white"),
+          panel.border = element_rect(fill=NA, colour = "grey")) +
+    ggtitle("WT Late spermatids")
+  
+  pYQE = ggplot(data = dfYQE,
+                aes(x = sampleb, y = samplea, fill = logFC)) + 
+    geom_raster() +
+    xlab("Sample B") + 
+    ylab("Sample A") +
+    scale_fill_distiller(palette = "RdYlBu", limits=c(-9,9)) +
+    geom_text(aes(label = round(logFC, 2))) +
+    theme(plot.title = element_text(hjust=0.5, size = 14), axis.text.x = element_text(angle = 90, vjust=0.5, size = 12),
+          axis.text.y = element_text(size = 12),axis.title=element_text(size=12), panel.background = element_rect(fill="white"),
+          panel.border = element_rect(fill=NA, colour = "grey")) +
+    ggtitle("YQ Early spermatids")
+  
+  pYQL = ggplot(data = dfYQL,
+                aes(x = sampleb, y = samplea, fill = logFC)) + 
+    geom_raster() +
+    xlab("Sample B") + 
+    ylab("Sample A") +
+    scale_fill_distiller(palette = "RdYlBu", limits=c(-9,9)) +
+    geom_text(aes(label = round(logFC, 2))) +
+    theme(plot.title = element_text(hjust=0.5, size = 14), axis.text.x = element_text(angle = 90, vjust=0.5, size = 12),
+          axis.text.y = element_text(size = 12),axis.title=element_text(size=12), panel.background = element_rect(fill="white"),
+          panel.border = element_rect(fill=NA, colour = "grey")) +
+    ggtitle("YQ Late spermatids")
+  
+  pCOMPE = ggplot(data = dfCOMPE,
+                  aes(x = sampleb, y = samplea, fill = logFC)) + 
+    geom_raster() +
+    xlab("YQ sample") + 
+    ylab("WT sample") +
+    scale_fill_distiller(palette = "RdYlBu", limits=c(-9,9)) +
+    geom_text(aes(label = round(logFC, 2))) +
+    theme(plot.title = element_text(hjust=0.5, size = 14), axis.text.x = element_text(angle = 90, vjust=0.5, size = 12),
+          axis.text.y = element_text(size = 12),axis.title=element_text(size=12), panel.background = element_rect(fill="white"),
+          panel.border = element_rect(fill=NA, colour = "grey")) +
+    ggtitle("WT vs YQ Early spermatids")
+  
+  pCOMPL = ggplot(data = dfCOMPL,
+                  aes(x = sampleb, y = samplea, fill = logFC)) + 
+    geom_raster() +
+    xlab("YQ sample") + 
+    ylab("WT sample") +
+    scale_fill_distiller(palette = "RdYlBu", limits=c(-9,9)) +
+    geom_text(aes(label = round(logFC, 2))) +
+    theme(plot.title = element_text(hjust=0.5, size=14), axis.text.x = element_text(angle = 90, vjust=0.5, size = 12),
+          axis.text.y = element_text(size = 12),axis.title=element_text(size=12), panel.background = element_rect(fill="white"),
+          panel.border = element_rect(fill=NA, colour = "grey")) +
+    ggtitle("WT vs YQ Late spermatids")
+  
+  pWTE_single = ggplot(data = dfWTE,
+                       aes(x = sampleb, y = samplea, fill = logFC)) + 
+    geom_raster() +
+    xlab("Sample B") + 
+    ylab("Sample A") +
+    scale_fill_distiller(palette = "RdYlBu", limits=c(-9,9)) +
+    geom_text(aes(label = round(logFC, 2))) +
+    theme(plot.title = element_text(hjust=0.5, size = 14), axis.text.x = element_text(angle = 90, vjust=0.5, size = 12),
+          axis.text.y = element_text(size = 12), axis.title=element_text(size=12), panel.background = element_rect(fill="white"),
+          panel.border = element_rect(fill=NA, colour = "grey"),legend.position = 'none')+
+    ggtitle(gene_id)
+  
+  #combine plots into one image
+  multi=plot_grid(pWTE + theme(legend.position = 'none'),
+                  pWTL + theme(legend.position = 'none'), 
+                  pYQE + theme(legend.position = 'none'), 
+                  pYQL + theme(legend.position = 'none'),
+                  pCOMPE + theme(legend.position = 'none'), 
+                  pCOMPL + theme(legend.position = 'none'),
+                  scale=1, ncol = 2, nrow = 3)
+  title <- ggdraw() + draw_label(gene_id, fontface='bold',size=18)
+  biotype_label <- ggdraw() + draw_label(biotype, fontface='bold',size=12)
+  chromosome <- ggdraw() + draw_label(chr, fontface='bold',size=12)
+  multi=plot_grid(title, multi, chromosome,biotype_label, ncol=1, rel_heights=c(0.1, 2,0.05,0.05)) # rel_heights values control title margins
+  
+  WTvYQ=plot_grid(pCOMPE + theme(legend.position = 'none'), 
+                  pCOMPL + theme(legend.position = 'none'),
+                  scale=1, ncol = 2, nrow = 1)
+  WTvYQ=plot_grid(title, WTvYQ, ncol=1, rel_heights=c(0.2, 2))
+  
+  #export plots as .png
+  ggsave(filename=paste0("../../../HEATMAPS/Output/",gene_id,"_multi_heatmap.png"),plot=multi, width=8, height=12.5, scale=1)  
+  ggsave(filename=paste0("../../../HEATMAPS/Output/",gene_id,"_WTE_heatmap.png"),plot=pWTE_single, width=4, height=4, scale=1)  
+  ggsave(filename=paste0("../../../HEATMAPS/Output/",gene_id,"_COMP_heatmap.png"),plot=WTvYQ, width=8, height=4.5, scale=1)
+  
+  #rename the dataframe
+  df=assign(paste0("df_", gene_id), df)
+  pWTE_single=assign(paste0("pWTE_single", gene_id), pWTE_single)
+  #WTvYQ=assign(paste0("WTvYQ", gene_id), WTvYQ)
+  
+}
+
+legend=get_legend(pWTE)
+ggsave(filename=paste0("../../../HEATMAPS/Output/legend.png"),plot=legend, width=4, height=6, scale=0.5)
